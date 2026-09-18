@@ -141,4 +141,32 @@ describe('内置“出口被堵”示例方案', () => {
       ),
     ).toBe(true);
   });
+
+  it('围挡-竖移到 X=8（缺口仅 1m）时 A01 不可达并告警，其余展位不受影响', () => {
+    const moved = plan.booths.map((b) =>
+      b.label === '围挡-竖' ? { ...b, x: 8 } : b,
+    );
+    const r = analyzePlan(moved);
+    const a01 = moved.find((b) => b.label === 'A01')!;
+    // 1m 窄缝不能作为疏散通道：A01 无路径且触发“疏散不可达”告警
+    expect(r.paths[a01.id]).toEqual([]);
+    const noPath = r.alerts.filter((a) => a.kind === 'no-path');
+    expect(noPath.map((a) => a.boothId)).toEqual([a01.id]);
+    // 其余普通展位仍有疏散路径
+    for (const b of moved) {
+      if (b.kind !== 'partition' && b.label !== 'A01') {
+        expect(r.paths[b.id].length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('围挡-竖移到 X=8.5（缺口正好 1.5m）时 A01 恢复疏散路径', () => {
+    const moved = plan.booths.map((b) =>
+      b.label === '围挡-竖' ? { ...b, x: 8.5 } : b,
+    );
+    const r = analyzePlan(moved);
+    const a01 = moved.find((b) => b.label === 'A01')!;
+    expect(r.paths[a01.id].length).toBeGreaterThan(0);
+    expect(r.alerts.some((a) => a.kind === 'no-path')).toBe(false);
+  });
 });

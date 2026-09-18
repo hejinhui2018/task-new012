@@ -1,10 +1,19 @@
 /**
  * 疏散可达性：在展厅 0.5 m 网格上做 BFS。
- * 展位 footprint 为障碍（边相不算阻挡，允许贴边通行），
- * 从展位正面接待点出发，4 邻接（不斜穿对角），到达任一出口目标点即成功。
+ *
+ * 通道净宽规则（与净空检查一致）：可行走格子的中心必须位于所有展位/围挡
+ * 向外膨胀 CLEARANCE/2（0.75 m）后的区域之外；恰好落在膨胀边界上
+ * （距离障碍正好 0.75 m）仍然允许通行。这样两条障碍之间不足 1.5 m 的
+ * 水平、垂直或拐角窄口都不可通过，正好 1.5 m 的通道恰好容下一条中线。
+ * 展厅外墙不膨胀（出口开在墙上，路径必须能贴墙进入出口）。
+ *
+ * 接待点从展位正面出发：接待点距本展位只有 0.25 m，必然落在“自身膨胀区”
+ * 内，因此起点格允许被膨胀区覆盖（否则每个展位都被自己的安全距离封死）；
+ * 但第一步之后必须落在真正满足净宽的格子上。
  */
 import type { Booth, ExitDef, Point } from '../types';
 import {
+  CLEARANCE,
   EXITS,
   HALL_HEIGHT,
   HALL_WIDTH,
@@ -22,6 +31,9 @@ export interface PathResult {
 }
 
 const EPS = 1e-9;
+
+/** 障碍向四周膨胀的距离：净宽要求的一半。 */
+const INFLATE = CLEARANCE / 2;
 
 /** 出口开口内侧网格是否全部可通行；任一目标格被展位占据即视为出口被堵。 */
 export function exitBlockingBooth(
@@ -57,8 +69,8 @@ function rectsTouchIntersect(a: Rect, b: Rect): boolean {
 }
 
 /**
- * 判断某个网格单元中心所在单元是否被展位占据。
- * 导出供测试使用。
+ * 判断某个网格单元是否被展位实体占据（不考虑净宽膨胀）。
+ * 用于出口封堵判定与测试；寻路通行性请用 isPassageCell。
  */
 export function isBlockedCell(
   cx: number,
@@ -74,6 +86,37 @@ export function isBlockedCell(
     if (rectsTouchIntersect(cell, rectOf(b))) return true;
   }
   return false;
+}
+
+/**
+ * 判断某个网格单元是否满足 1.5 m 通道净宽、可以行走。
+ * 格心落在任一展位/围挡膨胀 CLEARANCE/2 后的区域内部即不可通行；
+ * 恰好落在膨胀边界上（距障碍正好 0.75 m）允许通行——
+ * 两条障碍之间正好 1.5 m 的通道因此保留一条中线。
+ */
+export function isPassageCell(
+  cx: number,
+  cy: number,
+  booths: Booth[],
+  cols: number,
+  rows: number,
+  g: number = PATH_GRID,
+): boolean {
+  if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) return false;
+  const px = cx * g + g / 2;
+  const py = cy * g + g / 2;
+  for (const b of booths) {
+    const r = rectOf(b);
+    if (
+      px > r.x - INFLATE + EPS &&
+      px < r.x + r.w + INFLATE - EPS &&
+      py > r.y - INFLATE + EPS &&
+      py < r.y + r.h + INFLATE - EPS
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function nearestCell(p: Point, g: number): { cx: number; cy: number } {
@@ -97,12 +140,12 @@ export function findExitPath(
   const cols = Math.round(HALL_WIDTH / g);
   const rows = Math.round(HALL_HEIGHT / g);
 
-  // 预计算障碍位图（展位越界部分自然落在网格外，不影响室内单元）。
+  // 预计算通行位图（展位越界部分自然落在网格外，不影响室内单元）。
   const blocked = new Uint8Array(cols * rows);
   let blockedCellCount = 0;
   for (let cy = 0; cy < rows; cy++) {
     for (let cx = 0; cx < cols; cx++) {
-      if (isBlockedCell(cx, cy, booths, cols, rows, g)) {
+      if (!isPassageCell(cx, cy, booths, cols, rows, g)) {
         blocked[cy * cols + cx] = 1;
         blockedCellCount++;
       }
@@ -110,15 +153,18 @@ export function findExitPath(
   }
 
   const s = nearestCell(start, g);
-  // 起点被堵（例如正面紧贴另一展位）时，先尝试在 1 格范围内找最近的可行走单元。
   let startCell = s;
-  if (isBlockedCell(s.cx, s.cy, booths, cols, rows, g)) {
+  if (s.cx < 0 || s.cy < 0 || s.cx >= cols || s.cy >= rows) {
+    // 接待点落在展厅外（正面贴墙）：退回最近的可行走单元。
     const alt = nearestFreeNeighbor(s.cx, s.cy, blocked, cols, rows);
     if (!alt) {
       return { reachable: false, path: [], blockedCellCount };
     }
     startCell = alt;
   }
+  // 起点格在展厅内时即使被膨胀区覆盖也直接作为起点：
+  // 接待点紧贴本展位正面，本就在安全距离之内；但后续每步都必须可通行。
+  const startIdx = startCell.cy * cols + startCell.cx;
 
   const targets = new Set<number>();
   for (const t of exitTargetPoints(exits)) {
@@ -132,7 +178,6 @@ export function findExitPath(
   const prev = new Int32Array(cols * rows).fill(-1);
   const seen = new Uint8Array(cols * rows);
   const queue: number[] = [];
-  const startIdx = startCell.cy * cols + startCell.cx;
   seen[startIdx] = 1;
   queue.push(startIdx);
 
