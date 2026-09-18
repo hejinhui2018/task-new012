@@ -102,7 +102,9 @@ export function analyzePlan(booths: Booth[]): AnalysisResult {
   for (const b of booths) {
     if (b.kind === 'partition') continue;
     const start = receptionPoint(b);
-    const result = findExitPath(booths, start);
+    // 传入自身：起步时忽略自己展位的净空晕（从正面门口出发），
+    // 路径其余部分仍按完整 1.5 m 净空判定，窄缝/拐角不会被穿过。
+    const result = findExitPath(booths, start, EXITS, undefined, b);
     if (result.reachable) {
       paths[b.id] = result.path;
     } else {

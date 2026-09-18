@@ -128,6 +128,30 @@ describe('内置“出口被堵”示例方案', () => {
     expect(r.alerts.some((a) => a.kind === 'no-path')).toBe(false);
   });
 
+  it('围挡-竖移到 X=8：只剩 1.0m 缺口，A01 仍不可达（窄缝不是通道）', () => {
+    const moved = plan.booths.map((b) =>
+      b.label === '围挡-竖' ? { ...b, x: 8 } : b,
+    );
+    const r = analyzePlan(moved);
+    const a01 = moved.find((b) => b.label === 'A01')!;
+    expect(r.paths[a01.id]).toEqual([]);
+    expect(
+      r.alerts.some((a) => a.kind === 'no-path' && a.boothId === a01.id),
+    ).toBe(true);
+  });
+
+  it('围挡-竖移到 X=8.5：缺口正好 1.5m，A01 路径恢复', () => {
+    const moved = plan.booths.map((b) =>
+      b.label === '围挡-竖' ? { ...b, x: 8.5 } : b,
+    );
+    const r = analyzePlan(moved);
+    const a01 = moved.find((b) => b.label === 'A01')!;
+    expect(r.paths[a01.id].length).toBeGreaterThan(0);
+    expect(
+      r.alerts.some((a) => a.kind === 'no-path' && a.boothId === a01.id),
+    ).toBe(false);
+  });
+
   it('拖开 B09 后南出口立即解封（A01 仍因封闭区不可达）', () => {
     const moved = plan.booths.map((b) =>
       b.label === 'B09' ? { ...b, x: 0, y: 12 } : b,
